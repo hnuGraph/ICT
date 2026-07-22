@@ -1,0 +1,31 @@
+# Build outputs
+build/
+bin/
+obj/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+DSQL_META
+DSQL_META.exe
+*.o
+*.a
+*.out
+*.obj
+*.exe
+*.dll
+*.lib
+*.pdb
+
+# IDE/generated project files
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+
+# Generated caches and local artifacts
+matching/incremental_db/
+db/
+DsqlMeta.sh
+*.bak
+*.bak_*
+*.$ea.selinux
