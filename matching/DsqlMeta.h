@@ -67,6 +67,17 @@ uint prune_depth_ = 0;
 ICTCache* ict_cache_ = nullptr;
 bool use_ict_cache_ = false;
 
+// DFS only has one active call at each depth. Reusing one candidate buffer per
+// depth avoids an allocation at every search node without changing traversal
+// order or candidate contents.
+std::vector<std::vector<VertexID>> candidate_buffers_;
+
+// During DSQL-P2 this is the number of vertices covered by the P2 snapshot
+// that are not covered by the current solution. It replaces a full data-graph
+// scan in every early-termination check.
+size_t p2_uncovered_snapshot_vertices_ = 0;
+bool p2_coverage_tracking_active_ = false;
+
 public:
     /*   ����DSQL�㷨  */
     /// �±������ݶ���ID��ֵΪ�����ݶ�����ֵĴ�����m_VT[i]>=1����ʾ���ݶ���i�Ѿ������ǣ��Ҹ��ǵĴ���Ϊm_VT[i]
@@ -146,11 +157,12 @@ public:
     size_t DSQLP2(uint leveli);
 
     void ReSort(const std::vector<bool>& qovp);
-    void Q1iSearch(uint depth, std::vector<uint> m, const std::vector<bool>& qovp);
-    bool Q2Search(uint depth, std::vector<uint> m, const std::vector<bool>& qOvp, uint levelj);
+    void Q1iSearch(uint depth, std::vector<uint>& m, const std::vector<bool>& qovp);
+    bool Q2Search(uint depth, std::vector<uint>& m, const std::vector<bool>& qOvp, uint levelj);
     bool QSearchD(uint depth, std::vector<uint>& inM, const std::vector<bool>& qOvp);
     bool QSearchDP2(uint depth, std::vector<uint>& inM, const std::vector<bool>& qOvp);
-    void ComputeCand(uint depth, const std::vector<uint>& m, std::vector<uint>& cand);
+    void ComputeCand(uint depth, const std::vector<uint>& m, const std::vector<bool>& qOvp,
+        bool phase2, std::vector<uint>& cand);
     void SetCandidates(uint depth, const std::vector<bool>& qOvp, std::vector<uint>& cand);
     void SetCandidatesP2(uint depth, const std::vector<bool>& qOvp,std::vector<uint>& cand);
     void AddMatchedSubgraph(const std::vector<uint>& m);
@@ -166,6 +178,5 @@ public:
 
 
 
-    const size_t GetNumKeyVertices() const { return this->num_keyvertex_; }
+    size_t GetNumKeyVertices() const { return this->num_keyvertex_; }
 };
-

@@ -12,6 +12,7 @@
 #include <iomanip>
 #include <algorithm>
 #include <climits>
+#include <memory>
 namespace fs = std::filesystem;
 
 static std::string s_thisProgramName = "";
@@ -151,15 +152,18 @@ int main(int argc, char* argv[]) {
 
 size_t ict_get_before = sharedICT.m_getCount;
 size_t ict_hit_before = sharedICT.m_hitCount;
+size_t ict_reuse_before = sharedICT.m_reuseCount;
+size_t ict_reused_prefix_before = sharedICT.m_reusedPrefixLength;
 size_t ict_new_node_before = sharedICT.m_newNodeCount;
 size_t ict_build_before = sharedICT.m_buildCount;
+size_t ict_intersection_elements_before = sharedICT.m_intersectionElementCount;
+size_t ict_intersection_capacity_before = sharedICT.m_intersectionCapacityCount;
 
 Timer t;
 t.StartTimer();
 
-DsqlMeta* dsqlMeta = nullptr;
-
-dsqlMeta = new DsqlMeta(query_graph, data_graph, num_of_k, print_prep, print_enum, false);
+auto dsqlMeta = std::make_unique<DsqlMeta>(
+    query_graph, data_graph, num_of_k, print_prep, print_enum, false);
 dsqlMeta->SetICTCache(&sharedICT);
 
 std::cout << "DsqlMeta preprocessing..." << std::endl;
@@ -183,8 +187,10 @@ std::cout << "DsqlMeta preprocessing..." << std::endl;
 		dsqlMeta->GetNumKeyVertex(DsqlMeata_num_kv);
 		dsqlMeta->GetNumInitialResults(DsqlMeata_num_results);
 
-		size_t memUsage = mem_end-mem_start;
-		std::cout << "Memory usage: "<<mem_end-mem_start<<" KB"<<std::endl;
+		const int mem_delta = (mem_start >= 0 && mem_end >= mem_start)
+			? (mem_end - mem_start) : 0;
+		size_t memUsage = static_cast<size_t>(mem_delta);
+		std::cout << "Memory usage: " << mem_delta << " KB" << std::endl;
 		std::cout << "DsqlMeta time: " << time_cost << " ms" << std::endl;
 		std::cout << "DsqlMeta match size: " << dsqlMeta->m_T.size() << std::endl;
 		std::cout << "DsqlMeta the number of key vertices: " << DsqlMeata_num_kv << std::endl;
@@ -193,23 +199,43 @@ std::cout << "DsqlMeta preprocessing..." << std::endl;
 		std::cout << "DsqlMeta the number of skipping data vertices: " << dsqlMeta->opt.skipDataVertexCount << std::endl;
 		size_t ict_get_this_query = sharedICT.m_getCount - ict_get_before;
 size_t ict_hit_this_query = sharedICT.m_hitCount - ict_hit_before;
+size_t ict_reuse_this_query = sharedICT.m_reuseCount - ict_reuse_before;
+size_t ict_reused_prefix_this_query = sharedICT.m_reusedPrefixLength - ict_reused_prefix_before;
 size_t ict_new_node_this_query = sharedICT.m_newNodeCount - ict_new_node_before;
 size_t ict_build_this_query = sharedICT.m_buildCount - ict_build_before;
+size_t ict_intersection_elements_this_query =
+    sharedICT.m_intersectionElementCount - ict_intersection_elements_before;
+size_t ict_intersection_capacity_this_query =
+    sharedICT.m_intersectionCapacityCount - ict_intersection_capacity_before;
 
 std::cout << "ICT get count of this query: " << ict_get_this_query << std::endl;
-std::cout << "ICT hit count of this query: " << ict_hit_this_query << std::endl;
+std::cout << "ICT exact-hit count of this query: " << ict_hit_this_query << std::endl;
+std::cout << "ICT reuse count of this query: " << ict_reuse_this_query << std::endl;
 std::cout << "ICT new node count of this query: " << ict_new_node_this_query << std::endl;
 std::cout << "ICT build count of this query: " << ict_build_this_query << std::endl;
+std::cout << "ICT intersection elements added by this query: "
+          << ict_intersection_elements_this_query << std::endl;
+std::cout << "ICT intersection capacity bytes added by this query: "
+          << ict_intersection_capacity_this_query * sizeof(VertexID) << std::endl;
 
 if (ict_get_this_query > 0)
 {
-    std::cout << "ICT hit ratio of this query: "
+    std::cout << "ICT exact-hit ratio of this query: "
               << (ict_hit_this_query * 1.0 / ict_get_this_query)
+              << std::endl;
+    std::cout << "ICT reuse ratio of this query: "
+              << (ict_reuse_this_query * 1.0 / ict_get_this_query)
+              << std::endl;
+    std::cout << "ICT average reused prefix length of this query: "
+              << (ict_reuse_this_query == 0 ? 0.0 :
+                  ict_reused_prefix_this_query * 1.0 / ict_reuse_this_query)
               << std::endl;
 }
 else
 {
-    std::cout << "ICT hit ratio of this query: 0" << std::endl;
+    std::cout << "ICT exact-hit ratio of this query: 0" << std::endl;
+    std::cout << "ICT reuse ratio of this query: 0" << std::endl;
+    std::cout << "ICT average reused prefix length of this query: 0" << std::endl;
 }
 
 		if (print_key_vertice) dsqlMeta->PrintKeyVertexSet();
@@ -232,10 +258,8 @@ else
 		totalMemUsage += memUsage;
 
 		// if (save_run_info) SaveRunningInfo(data_graph_path, file, time_cost, dsqlMeta, num_of_k,memUsage);
-		if (save_run_info) SaveMemUsage(data_graph_path, file, time_cost, dsqlMeta, num_of_k,memUsage);
-
-		delete dsqlMeta;
-		dsqlMeta = nullptr;
+		if (save_run_info) SaveMemUsage(
+			data_graph_path, file, time_cost, dsqlMeta.get(), num_of_k, memUsage);
 	}
 	std::cout << "##############################################" << std::endl;
 	std::cout << "# total query graph : " << totalQueryGraph << std::endl;
@@ -246,18 +270,40 @@ else
 	std::cout << "# total skip data vertex count : " << totalSkipDataCount << std::endl;
 	std::cout << "# total mem usage : " << totalMemUsage << std::endl;
 	std::cout << "# ICT get count : " << sharedICT.m_getCount << std::endl;
-std::cout << "# ICT hit count : " << sharedICT.m_hitCount << std::endl;
-std::cout << "# ICT new node count : " << sharedICT.m_newNodeCount << std::endl;
-std::cout << "# ICT build count : " << sharedICT.m_buildCount << std::endl;
+	std::cout << "# ICT exact-hit count : " << sharedICT.m_hitCount << std::endl;
+	std::cout << "# ICT reuse count : " << sharedICT.m_reuseCount << std::endl;
+	std::cout << "# ICT new node count : " << sharedICT.m_newNodeCount << std::endl;
+	std::cout << "# ICT build count : " << sharedICT.m_buildCount << std::endl;
+
+	const ICTCache::MemoryStats ict_memory = sharedICT.GetMemoryStats();
+	std::cout << "# ICT label root count : " << ict_memory.label_roots << std::endl;
+	std::cout << "# ICT cache path node count : " << ict_memory.child_edges << std::endl;
+	std::cout << "# ICT active node storage bytes : "
+	          << ict_memory.ActiveNodeStorageBytes() << std::endl;
+	std::cout << "# ICT node-pool reserved bytes : "
+	          << ict_memory.PoolReservedBytes() << std::endl;
+	std::cout << "# ICT intersection logical bytes : "
+	          << ict_memory.IntersectionBytes() << std::endl;
+	std::cout << "# ICT intersection capacity bytes : "
+	          << ict_memory.IntersectionCapacityBytes() << std::endl;
+	std::cout << "# ICT estimated hash bytes : "
+	          << ict_memory.EstimatedHashBytes() << std::endl;
+	std::cout << "# ICT estimated total reserved bytes : "
+	          << ict_memory.EstimatedTotalReservedBytes() << std::endl;
 
 if (sharedICT.m_getCount > 0)
 {
-    std::cout << "# ICT hit ratio : "
+    std::cout << "# ICT exact-hit ratio : "
               << (sharedICT.m_hitCount * 1.0 / sharedICT.m_getCount)
               << std::endl;
+    std::cout << "# ICT reuse ratio : "
+              << (sharedICT.m_reuseCount * 1.0 / sharedICT.m_getCount)
+              << std::endl;
+    std::cout << "# ICT average reused prefix length : "
+              << (sharedICT.m_reuseCount == 0 ? 0.0 :
+                  sharedICT.m_reusedPrefixLength * 1.0 / sharedICT.m_reuseCount)
+              << std::endl;
 }
+
 	return 0;
 }
-
-
-

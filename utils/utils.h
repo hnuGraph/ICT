@@ -49,6 +49,7 @@ namespace mem {
 
     inline int getValue(){ //Note: this value is in KB!
         FILE* file = fopen("/proc/self/status", "r");
+        if (file == nullptr) return -1;
         int result = -1;
         char line[128];
 
@@ -64,6 +65,7 @@ namespace mem {
 
     inline int getMemUsage(){ //Note: this value is in KB!
         FILE* file = fopen("/proc/self/status", "r");
+        if (file == nullptr) return -1;
         int result = -1;
         char line[128];
 

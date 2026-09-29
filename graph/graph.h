@@ -7,12 +7,34 @@
 #include <string>
 #include <unordered_map>
 #include <bitset>
+#include <utility>
 
 #include "utils/types.h"
 #include "utils/utils.h"
 
 class Graph
 {
+public:
+    class NeighborRange
+    {
+    public:
+        using const_iterator = std::vector<uint>::const_iterator;
+
+        NeighborRange(const std::vector<uint>& storage, size_t begin, size_t end)
+            : storage_(&storage), begin_(begin), end_(end)
+        {}
+
+        const_iterator begin() const { return storage_->begin() + begin_; }
+        const_iterator end() const { return storage_->begin() + end_; }
+        size_t size() const { return end_ - begin_; }
+        bool empty() const { return begin_ == end_; }
+
+    private:
+        const std::vector<uint>* storage_;
+        size_t begin_;
+        size_t end_;
+    };
+
 protected:
     std::string name_;
     uint edge_count_;
@@ -31,8 +53,12 @@ protected:
     // Keep the original variable name to avoid changing too many places.
     std::unordered_map<uint, std::vector<uint>> verterbylabel_;
 
-    // neighbors_by_label_[v][label] = neighbors of v whose vertex label is label.
-    std::vector<std::vector<std::vector<uint>>> neighbors_by_label_;
+    // Sparse CSR-like label-neighbor index.  The groups belonging to vertex v
+    // are [label_group_offsets_[v], label_group_offsets_[v + 1]).
+    std::vector<size_t> label_group_offsets_;
+    std::vector<uint> label_group_labels_;
+    std::vector<size_t> label_neighbor_offsets_;
+    std::vector<uint> label_neighbors_;
 
 public:
     std::vector<uint> vlabels_;
@@ -64,7 +90,7 @@ public:
 
     // New interface:
     // Return neighbors of v whose vertex label is label.
-    const std::vector<uint>& GetNeighborsByLabel(uint v, uint label) const;
+    NeighborRange GetNeighborsByLabel(uint v, uint label) const;
 
     uint GetDegree(uint v) const;
 

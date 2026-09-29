@@ -1,6 +1,8 @@
 ﻿#include "DsqlMeta.h"
 
 #include <algorithm>
+#include <array>
+#include <cassert>
 #include <iostream>
 #include <vector>
 #include "utils/types.h"
@@ -22,7 +24,7 @@ void DsqlMeta::InitOptSESM()
 	opt.neighborRM.assign(verticesCount, 0);
 
 	// neighbor
-	for (int k = 0; k < verticesCount; ++k)
+	for (size_t k = 0; k < verticesCount; ++k)
 	{
 		VertexID curU = match_order[k];
 		visited[curU] = true;
@@ -30,10 +32,9 @@ void DsqlMeta::InitOptSESM()
 		LabelID label = query_.GetVertexLabel(curU);
 		countMap[label]++;
 
-		uint nextNbrCount = 0;
 		const auto& nbrs = query_.GetNeighbors(curU);
-		nextNbrCount = nbrs.size();
-		for (int i = 0; i < nextNbrCount; ++i)
+		const size_t nextNbrCount = nbrs.size();
+		for (size_t i = 0; i < nextNbrCount; ++i)
 		{
 			VertexID nbrID = nbrs[i];
 			if (!visited[nbrID])
@@ -44,7 +45,7 @@ void DsqlMeta::InitOptSESM()
 	}
 
 	// label
-	for (int k = 0; k < verticesCount; ++k)
+	for (size_t k = 0; k < verticesCount; ++k)
 	{
 		VertexID curU = match_order[k];
 		LabelID label = query_.GetVertexLabel(curU);
@@ -70,7 +71,7 @@ void DsqlMeta::InitOptSKNB(uint depth)
 void DsqlMeta::SetOptDynamicCT(uint depth, const std::vector<uint>& inM,uint v)
 {
 	VertexID u = match_order[depth];
-	for (int p = 0; p < depth; ++p)
+	for (uint p = 0; p < depth; ++p)
 	{
 		VertexID uid = match_order[p];
 		if (inM[uid] == v) // 动态冲突
@@ -95,14 +96,14 @@ bool DsqlMeta::CheckOptSkipNode(uint curDepth)
 void DsqlMeta::ClearOptBadVertices(int depth)
 {
 	uint maxDepth = query_.NumVertices();
-	if (depth == maxDepth - 1) return;
-	for(int i = depth + 1; i < maxDepth;++i)
+	if (depth == static_cast<int>(maxDepth) - 1) return;
+	for(int i = depth + 1; i < static_cast<int>(maxDepth); ++i)
 		opt.badVertices[i].clear();
 }
 
 void DsqlMeta::ClearOptAllBadVertices()
 {
-	for (int i = 0; i < query_.NumVertices(); ++i)
+	for (uint i = 0; i < query_.NumVertices(); ++i)
 		opt.badVertices[i].clear();
 }
 
@@ -143,6 +144,7 @@ DsqlMeta::DsqlMeta(Graph& query_graph, Graph& data_graph,
 	opt.matchSuc.resize(query_.NumVertices(), 0);
 	opt.dynamicConflictTable.resize(query_.NumVertices(), std::vector<bool>(query_.NumVertices(), false));
 	opt.badVertices.resize(query_.NumVertices(), std::unordered_set<uint>());
+	candidate_buffers_.resize(query_.NumVertices());
 }
 
 
@@ -161,14 +163,14 @@ void DsqlMeta::BuildAdjMatrix() {
 
 	//build adjacency matrix of query graph
 	adjacency_matrix.reserve(query_.NumVertices());
-	for (int i = 0; i < query_.NumVertices(); i++) {
+	for (uint i = 0; i < query_.NumVertices(); i++) {
 		adjacency_matrix.emplace_back();
 		adjacency_matrix[i].reserve(query_.NumVertices());
 		adjacency_matrix[i].resize(query_.NumVertices(), false);
 	}
 
-	for (int i = 0; i < query_.NumVertices(); i++) {
-		auto q_nbrs = query_.GetNeighbors(i);
+	for (uint i = 0; i < query_.NumVertices(); i++) {
+		const auto& q_nbrs = query_.GetNeighbors(i);
 		for (auto j : q_nbrs) {
 			adjacency_matrix[i][j] = true;
 			adjacency_matrix[j][i] = true;
@@ -183,7 +185,7 @@ void DsqlMeta::BuildAdjMatrix() {
 		for (uint s = 0; s <= i; s++)
 		{
 			uint uf = match_order[s];
-			auto nbrs = query_.GetNeighbors(uf);
+			const auto& nbrs = query_.GetNeighbors(uf);
 			for (auto j : nbrs)
 			{
 				AllRN[j] = true;
@@ -209,10 +211,11 @@ void DsqlMeta::BuildCP2LEOrder() {
 	if (print_preprocessing_results_) std::cout << "BuildCP2LEOrder...." << std::endl;
 	mutiexp_depth_ = UINT32_MAX;
 	int sum = 0;
-	for (int i = query_.NumVertices() - 1; i >= 0; i--) {
+	const int query_size = static_cast<int>(query_.NumVertices());
+	for (int i = query_size - 1; i >= 0; i--) {
 		uint u = match_order[i];
 		bool flag = true;
-		for (int j = i + 1; j < query_.NumVertices(); j++) {
+		for (int j = i + 1; j < query_size; j++) {
 			uint v = match_order[j];
 			if (query_.checkEdgeExistence(u, v)) {
 				flag = false;
@@ -221,7 +224,7 @@ void DsqlMeta::BuildCP2LEOrder() {
 		}
 		if (flag) {
 			sum++;
-			for (int j = i; j < query_.NumVertices() - 1; j++) {
+			for (int j = i; j < query_size - 1; j++) {
 				match_order[j] = match_order[j + 1];
 			}
 			match_order[query_.NumVertices() - 1] = u;
@@ -231,7 +234,7 @@ void DsqlMeta::BuildCP2LEOrder() {
 	std::reverse(match_order.begin() + mutiexp_depth_, match_order.end());
 	if (print_preprocessing_results_) {
 		std::cout << "CP2LEOrder: " << std::endl;
-		for (int i = 0; i < query_.NumVertices(); i++) {
+		for (int i = 0; i < query_size; i++) {
 			std::cout << match_order[i] << " ";
 		}
 		std::cout << std::endl;
@@ -312,16 +315,16 @@ void DsqlMeta::BuildCover()
 	uint max_degree_ = data_.GetMaxDegree();
 	uint qsize_ = query_.NumVertices();
 	CandidateSets.reserve(qsize_);
-	for (int i = 0; i < qsize_; ++i) {
+	for (uint i = 0; i < qsize_; ++i) {
 		CandidateSets.emplace_back();
 		CandidateSets[i].reserve(qsize_);
-		for (int j = 0; j < qsize_; ++j) {
+		for (uint j = 0; j < qsize_; ++j) {
 			CandidateSets[i].emplace_back();
 			CandidateSets[i][j].reserve(max_degree_);
 		}
 	}
 	CandidateSetFlag.reserve(qsize_);
-	for (int i = 0; i < qsize_; i++) {
+	for (uint i = 0; i < qsize_; i++) {
 		CandidateSetFlag.emplace_back();
 		CandidateSetFlag[i].resize(qsize_, false);
 	}
@@ -409,6 +412,8 @@ void DsqlMeta::StartDsql()
 	m_oldSort = match_order;
 	m_VT = std::vector<uint>(data_.NumVertices(), 0);
 	m_VM.resize(query_.NumVertices());
+	p2_uncovered_snapshot_vertices_ = 0;
+	p2_coverage_tracking_active_ = false;
 
 	size_t level_i = DSQLP1();
 
@@ -455,7 +460,7 @@ size_t DsqlMeta::DSQLP1()
 		return 0;
 	}
 	if (reach_time_limit) return 0;
-	int level_i = 1;
+	uint level_i = 1;
 	for (; level_i <= verticesCount - 1; ++level_i)
 	{
 		GetOverlapList(level_i);
@@ -486,6 +491,8 @@ size_t DsqlMeta::DSQLP2(uint leveli)
 	size_t verticesCount = query_.NumVertices();
 	std::vector<uint> m(verticesCount, UNMATCHED);
 	this->m_p2VT = this->m_VT;
+	p2_uncovered_snapshot_vertices_ = 0;
+	p2_coverage_tracking_active_ = true;
 
 	// leveli > 0 才能进这个函数
 	uint levelj = leveli;
@@ -528,7 +535,7 @@ void DsqlMeta::ReSort(const std::vector<bool>& qovp)
 	}
 	else
 	{
-		for (int depth = 0; depth < verticesCount; ++depth)
+		for (uint depth = 0; depth < verticesCount; ++depth)
 		{
 			if (qovp[this->m_oldSort[depth]])
 			{
@@ -541,17 +548,17 @@ void DsqlMeta::ReSort(const std::vector<bool>& qovp)
 	uint nbrsCount = nbrs.size();
 	newOrder.push_back(firstU);
 	visited[firstU] = true;
-	for (int i = 0; i < nbrsCount; ++i)
+	for (uint i = 0; i < nbrsCount; ++i)
 	{
 		newOrder.push_back(nbrs[i]);
 		visited[nbrs[i]] = true;
 	}
-	int k = 1;
+	size_t k = 1;
 	while (newOrder.size() < verticesCount)
 	{
 		const auto& nbrs = query_.GetNeighbors(newOrder[k]);
 		nbrsCount = nbrs.size();
-		for (int i = 0; i < nbrsCount; ++i)
+		for (uint i = 0; i < nbrsCount; ++i)
 		{
 			if (visited[nbrs[i]]) continue;
 			newOrder.push_back(nbrs[i]);
@@ -562,12 +569,11 @@ void DsqlMeta::ReSort(const std::vector<bool>& qovp)
 	match_order = std::move(newOrder);
 }
 
-void DsqlMeta::Q1iSearch(uint depth, std::vector<uint> m, const std::vector<bool>& qOvp)
+void DsqlMeta::Q1iSearch(uint depth, std::vector<uint>& m, const std::vector<bool>& qOvp)
 {
 	if (reach_time_limit) return;
-	std::vector<uint> cand;
-	ComputeCand(depth, m, cand);
-	SetCandidates(depth, qOvp, cand);
+	std::vector<uint>& cand = candidate_buffers_[depth];
+	ComputeCand(depth, m, qOvp, false, cand);
 
 #ifdef DSQL2
 	InitOptSKNB(depth);
@@ -593,8 +599,8 @@ void DsqlMeta::Q1iSearch(uint depth, std::vector<uint> m, const std::vector<bool
 		}
 		opt.matchSuc[depth] = true;
 
+		// Recursive matches can change coverage after cand was constructed.
 		if ((qOvp.empty() || !qOvp[u]) && (m_VT[v] != 0)) continue;
-
 
 #ifdef DSQL3
 		if (CheckOptSkipDataVertice(depth, v)) continue;
@@ -653,12 +659,11 @@ void DsqlMeta::Q1iSearch(uint depth, std::vector<uint> m, const std::vector<bool
 #endif // DSQL3
 }
 
-bool DsqlMeta::Q2Search(uint depth, std::vector<uint> m, const std::vector<bool>& qOvp, uint levelj)
+bool DsqlMeta::Q2Search(uint depth, std::vector<uint>& m, const std::vector<bool>& qOvp, uint levelj)
 {
 	if (reach_time_limit) return true;
-	std::vector<uint> cand;
-	ComputeCand(depth, m, cand);
-	SetCandidatesP2(depth, qOvp, cand);
+	std::vector<uint>& cand = candidate_buffers_[depth];
+	ComputeCand(depth, m, qOvp, true, cand);
 
 #ifdef DSQL2
 	InitOptSKNB(depth);
@@ -683,8 +688,8 @@ bool DsqlMeta::Q2Search(uint depth, std::vector<uint> m, const std::vector<bool>
 		}
 		opt.matchSuc[depth] = true;
 
-		// 非重叠顶点，再次检查v是否已经匹配
-		if ((qOvp.empty() || !qOvp[u]) && (m_VT[v] != 0)) continue; 
+		// Recursive swaps can change coverage after cand was constructed.
+		if ((qOvp.empty() || !qOvp[u]) && (m_VT[v] != 0)) continue;
 
 #ifdef DSQL3
 		if (CheckOptSkipDataVertice(depth, v)) continue;
@@ -749,9 +754,8 @@ bool DsqlMeta::Q2Search(uint depth, std::vector<uint> m, const std::vector<bool>
 bool DsqlMeta::QSearchD(uint depth, std::vector<uint>& inM, const std::vector<bool>& qOvp)
 {
 	if (reach_time_limit) return false;
-	std::vector<uint> cand;
-	ComputeCand(depth, inM, cand);
-	SetCandidates(depth, qOvp,cand);
+	std::vector<uint>& cand = candidate_buffers_[depth];
+	ComputeCand(depth, inM, qOvp, false, cand);
 
 #ifdef DSQL1
 	SetOptSESM(depth, cand);
@@ -830,9 +834,8 @@ bool DsqlMeta::QSearchD(uint depth, std::vector<uint>& inM, const std::vector<bo
 bool DsqlMeta::QSearchDP2(uint depth, std::vector<uint>& inM, const std::vector<bool>& qOvp)
 {
 	if (reach_time_limit) return false;
-	std::vector<uint> cand;
-	ComputeCand(depth, inM, cand);
-	SetCandidatesP2(depth, qOvp, cand);
+	std::vector<uint>& cand = candidate_buffers_[depth];
+	ComputeCand(depth, inM, qOvp, true, cand);
 
 #ifdef DSQL1
 	SetOptSESM(depth, cand);
@@ -906,22 +909,52 @@ bool DsqlMeta::QSearchDP2(uint depth, std::vector<uint>& inM, const std::vector<
 	return false;
 }
 
-void DsqlMeta::ComputeCand(uint depth, const std::vector<uint>& m, std::vector<uint>& cand)
+void DsqlMeta::ComputeCand(
+    uint depth,
+    const std::vector<uint>& m,
+    const std::vector<bool>& qOvp,
+    bool phase2,
+    std::vector<uint>& cand)
 {
     cand.clear();
 
     VertexID curU = match_order[depth];
     LabelID curLabel = query_.GetVertexLabel(curU);
+    const bool overlap_vertex = !qOvp.empty() && qOvp[curU];
+
+    auto append_filtered = [&](const auto& source)
+    {
+        cand.reserve(source.size());
+        for (VertexID dataId : source)
+        {
+            bool keep;
+            if (overlap_vertex)
+            {
+                keep = phase2 ? (m_p2VT[dataId] != 0) : (m_VT[dataId] != 0);
+            }
+            else
+            {
+                keep = phase2
+                    ? (m_VT[dataId] == 0 && m_p2VT[dataId] == 0)
+                    : (m_VT[dataId] == 0);
+            }
+            if (keep) cand.push_back(dataId);
+        }
+    };
 
     if (depth == 0)
     {
         const std::vector<uint>& vertices = data_.GetVerticesByLabel(curLabel);
-        cand.assign(vertices.begin(), vertices.end());
+        append_filtered(vertices);
         return;
     }
 
-    std::vector<uint> depVertices;
-    depVertices.reserve(depth);
+    static constexpr size_t INLINE_DEPENDENCIES = 16;
+    std::array<VertexID, INLINE_DEPENDENCIES> inline_dependencies;
+    std::vector<VertexID> overflow_dependencies;
+    const bool use_inline_dependencies = depth <= INLINE_DEPENDENCIES;
+    if (!use_inline_dependencies) overflow_dependencies.reserve(depth);
+    size_t dependency_count = 0;
 
     for (uint i = 0; i < depth; ++i)
     {
@@ -929,25 +962,46 @@ void DsqlMeta::ComputeCand(uint depth, const std::vector<uint>& m, std::vector<u
 
         if (adjacency_matrix[curU][preU])
         {
-            depVertices.push_back(m[preU]);
+            if (use_inline_dependencies)
+                inline_dependencies[dependency_count] = m[preU];
+            else
+                overflow_dependencies.push_back(m[preU]);
+            ++dependency_count;
         }
     }
 
-    if (depVertices.empty())
+    if (dependency_count == 0)
     {
         const std::vector<uint>& vertices = data_.GetVerticesByLabel(curLabel);
-        cand.assign(vertices.begin(), vertices.end());
+        append_filtered(vertices);
         return;
     }
 
     if (use_ict_cache_ && ict_cache_ != nullptr)
     {
-        const std::vector<uint>& cached =
-            ict_cache_->GetRaw(curLabel, depVertices, data_);
+        const VertexID* canonical_dependencies;
+        if (use_inline_dependencies)
+        {
+            auto first = inline_dependencies.begin();
+            auto last = first + dependency_count;
+            std::sort(first, last);
+            dependency_count = static_cast<size_t>(std::unique(first, last) - first);
+            canonical_dependencies = inline_dependencies.data();
+        }
+        else
+        {
+            std::sort(overflow_dependencies.begin(), overflow_dependencies.end());
+            overflow_dependencies.erase(
+                std::unique(overflow_dependencies.begin(), overflow_dependencies.end()),
+                overflow_dependencies.end()
+            );
+            dependency_count = overflow_dependencies.size();
+            canonical_dependencies = overflow_dependencies.data();
+        }
 
-        // Do not expose the cache vector directly, because later SetCandidates()
-        // and SetCandidatesP2() will modify cand.
-        cand.assign(cached.begin(), cached.end());
+        const ICTCache::RawRange cached = ict_cache_->GetRawCanonical(
+            curLabel, canonical_dependencies, dependency_count, data_);
+        append_filtered(cached);
         return;
     }
 
@@ -965,8 +1019,7 @@ void DsqlMeta::ComputeCand(uint depth, const std::vector<uint>& m, std::vector<u
         }
 
         VertexID preV = m[preU];
-        const std::vector<uint>& labelNbrs =
-            data_.GetNeighborsByLabel(preV, curLabel);
+        const Graph::NeighborRange labelNbrs = data_.GetNeighborsByLabel(preV, curLabel);
 
         if (!initialized)
         {
@@ -997,55 +1050,56 @@ void DsqlMeta::ComputeCand(uint depth, const std::vector<uint>& m, std::vector<u
         const std::vector<uint>& vertices = data_.GetVerticesByLabel(curLabel);
         cand.assign(vertices.begin(), vertices.end());
     }
+
+    if (phase2) SetCandidatesP2(depth, qOvp, cand);
+    else SetCandidates(depth, qOvp, cand);
 }
 
 void DsqlMeta::SetCandidates(uint depth, const std::vector<bool>& qOvp, std::vector<uint>& cand)
 {
 	VertexID queryId = match_order[depth];
-	std::vector<uint> newCand;
+	size_t write = 0;
 	for (const uint dataId : cand)
 	{
+		bool keep = false;
 		if (!qOvp.empty() && qOvp[queryId])
 		{
-			if (m_VT[dataId] != 0)
-			{
-				newCand.push_back(dataId);
-			}
+			keep = (m_VT[dataId] != 0);
 		}
 		else
 		{
-			if (m_VT[dataId] == 0)
-			{
-				newCand.push_back(dataId);
-			}
+			keep = (m_VT[dataId] == 0);
+		}
+		if (keep)
+		{
+			cand[write++] = dataId;
 		}
 	}
-	cand = std::move(newCand);
+	cand.resize(write);
 }
 
 void DsqlMeta::SetCandidatesP2(uint depth, const std::vector<bool>& qOvp, std::vector<uint>& cand)
 {
 	VertexID queryId = match_order[depth];
-	std::vector<uint> newCand;
+	size_t write = 0;
 	for (const uint dataId : cand)
 	{
+		bool keep = false;
 		if (!qOvp.empty() && qOvp[queryId])
 		{
-			if (m_p2VT[dataId] != 0)
-			{
-				newCand.push_back(dataId);
-			}
+			keep = (m_p2VT[dataId] != 0);
 		}
 		else
 		{
 			// 第二阶段的非重叠顶点也不能出现在m_p2VT中
-			if (m_VT[dataId] == 0 && m_p2VT[dataId] == 0)
-			{
-				newCand.push_back(dataId);
-			}
+			keep = (m_VT[dataId] == 0 && m_p2VT[dataId] == 0);
+		}
+		if (keep)
+		{
+			cand[write++] = dataId;
 		}
 	}
-	cand = std::move(newCand);
+	cand.resize(write);
 }
 
 void DsqlMeta::AddMatchedSubgraph(const std::vector<uint>& m)
@@ -1056,6 +1110,11 @@ void DsqlMeta::AddMatchedSubgraph(const std::vector<uint>& m)
 		if (m_VT[dataId] == 0)
 		{
 			num_keyvertex_++;
+			if (p2_coverage_tracking_active_ && m_p2VT[dataId] > 0)
+			{
+				assert(p2_uncovered_snapshot_vertices_ > 0);
+				--p2_uncovered_snapshot_vertices_;
+			}
 		}
 		++m_VT[dataId];
 	}
@@ -1107,13 +1166,7 @@ void DsqlMeta::SwapSubgraph(const std::vector<uint>& h)
 bool DsqlMeta::CheckEarlyTerminated(uint level)
 {
 	// 条件1：C(T1) ∈ C(T);
-	for (VertexID dataId = 0; dataId < m_p2VT.size(); ++dataId)
-	{
-		if (m_p2VT[dataId] > 0 && m_VT[dataId] == 0)
-		{
-			return false;
-		}
-	}
+	if (p2_uncovered_snapshot_vertices_ != 0) return false;
 
 	// 条件2：L(f, T) ≥ (q − i)/(1 + α).
 	double ra = (query_.NumVertices() - level) * 1.0 / (1 + m_alpha);
@@ -1134,6 +1187,10 @@ void DsqlMeta::RemoveSubgraph(const std::vector<uint>& f)
 		VertexID dataId = f[queryId];
 		if (--m_VT[dataId] == 0) {
 			--num_keyvertex_;
+			if (p2_coverage_tracking_active_ && m_p2VT[dataId] > 0)
+			{
+				++p2_uncovered_snapshot_vertices_;
+			}
 		}
 	}
 }
@@ -1181,7 +1238,7 @@ void DsqlMeta::MutiExpansion(std::vector<uint> m) {
 		bool flag = false;
 		uint u_index = label_same_index[0];
 		uint u = match_order[u_index];
-		for (int s = 0; s < CandidateSets[mutiexp_depth_][u_index].size(); s++) {
+		for (size_t s = 0; s < CandidateSets[mutiexp_depth_][u_index].size(); s++) {
 			uint v = CandidateSets[mutiexp_depth_][u_index][s];
 			if (visited_[v]) continue;
 			visited_[v] = true;
@@ -1267,7 +1324,7 @@ bool DsqlMeta::VerifyCorrectness(const std::string& kvPath) {
 	}
 
 	std::set<int> kvSet;
-	for (auto i = 0; i < m_VT.size(); i++) {
+	for (size_t i = 0; i < m_VT.size(); i++) {
 		if (m_VT[i]) kvSet.insert(i);
 	}
 
@@ -1295,10 +1352,10 @@ bool DsqlMeta::VerifyCorrectness(const std::string& kvPath) {
 
 bool DsqlMeta::MutiExpTest(int depth, const std::vector<uint>& label_same_index, std::vector<uint>& m) {
 	if (reach_time_limit) return false;
-	if (depth == label_same_index.size()) return true;
+	if (depth == static_cast<int>(label_same_index.size())) return true;
 	uint u_index = label_same_index[depth];
 	uint u = match_order[u_index];
-	for (int i = 0; i < CandidateSets[mutiexp_depth_][u_index].size(); i++) {
+	for (size_t i = 0; i < CandidateSets[mutiexp_depth_][u_index].size(); i++) {
 		uint v = CandidateSets[mutiexp_depth_][u_index][i];
 		if (visited_[v]) continue;
 		visited_[v] = true;
@@ -1331,7 +1388,7 @@ bool DsqlMeta::ComputeCand(uint depth, std::vector<uint> m) {
             CandidateSets[depth][i].clear();
 
             LabelID ubLabel = query_.GetVertexLabel(ub);
-            const std::vector<uint>& vf_label_nbrs = data_.GetNeighborsByLabel(vf, ubLabel);
+            const Graph::NeighborRange vf_label_nbrs = data_.GetNeighborsByLabel(vf, ubLabel);
 
             if (CandidateSets[depth - 1][i].size() == 0) {
                 CandidateSets[depth][i].assign(vf_label_nbrs.begin(), vf_label_nbrs.end());
@@ -1400,7 +1457,3 @@ bool DsqlMeta::FullCoveragePrune(uint depth, const std::vector<uint>& m) {
 	FlushFlag(depth - 1);
 	return true;
 }
-
-
-
-

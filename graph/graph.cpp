@@ -19,11 +19,17 @@ Graph::Graph()
     , neighbors_{}
     , elabels_{}
     , verterbylabel_{}
-    , neighbors_by_label_{}
+    , label_group_offsets_{}
+    , label_group_labels_{}
+    , label_neighbor_offsets_{}
+    , label_neighbors_{}
     , vlabels_{}
 {
     verterbylabel_.clear();
-    neighbors_by_label_.clear();
+    label_group_offsets_.clear();
+    label_group_labels_.clear();
+    label_neighbor_offsets_.clear();
+    label_neighbors_.clear();
 }
 
 void Graph::AddVertex(uint id, uint label)
@@ -58,7 +64,10 @@ void Graph::RemoveVertex(uint id)
 
     // Label-aware index becomes stale after graph updates.
     // Rebuild it manually if dynamic updates are used.
-    neighbors_by_label_.clear();
+    label_group_offsets_.clear();
+    label_group_labels_.clear();
+    label_neighbor_offsets_.clear();
+    label_neighbors_.clear();
 }
 
 void Graph::AddEdge(uint v1, uint v2, uint label)
@@ -81,7 +90,10 @@ void Graph::AddEdge(uint v1, uint v2, uint label)
 
     // Label-aware index becomes stale after graph updates.
     // LoadFromFile() will call BuildLabelNeighborIndex() after all edges are inserted.
-    neighbors_by_label_.clear();
+    label_group_offsets_.clear();
+    label_group_labels_.clear();
+    label_neighbor_offsets_.clear();
+    label_neighbors_.clear();
 }
 
 void Graph::RemoveEdge(uint v1, uint v2)
@@ -112,7 +124,10 @@ void Graph::RemoveEdge(uint v1, uint v2)
 
     // Label-aware index becomes stale after graph updates.
     // Rebuild it manually if dynamic updates are used.
-    neighbors_by_label_.clear();
+    label_group_offsets_.clear();
+    label_group_labels_.clear();
+    label_neighbor_offsets_.clear();
+    label_neighbors_.clear();
 }
 
 uint Graph::GetVertexLabel(uint u) const
@@ -130,14 +145,30 @@ const std::vector<uint>& Graph::GetNeighborLabels(uint v) const
     return elabels_[v];
 }
 
-const std::vector<uint>& Graph::GetNeighborsByLabel(uint v, uint label) const
+Graph::NeighborRange Graph::GetNeighborsByLabel(uint v, uint label) const
 {
-    static const std::vector<uint> empty;
+    if (v >= NumVertices() || label_group_offsets_.size() != NumVertices() + 1)
+    {
+        return NeighborRange(label_neighbors_, 0, 0);
+    }
 
-    if (v >= neighbors_by_label_.size()) return empty;
-    if (label >= neighbors_by_label_[v].size()) return empty;
+    const size_t group_begin = label_group_offsets_[v];
+    const size_t group_end = label_group_offsets_[v + 1];
+    const auto first = label_group_labels_.begin() + group_begin;
+    const auto last = label_group_labels_.begin() + group_end;
+    const auto it = std::lower_bound(first, last, label);
 
-    return neighbors_by_label_[v][label];
+    if (it == last || *it != label)
+    {
+        return NeighborRange(label_neighbors_, 0, 0);
+    }
+
+    const size_t group = static_cast<size_t>(it - label_group_labels_.begin());
+    return NeighborRange(
+        label_neighbors_,
+        label_neighbor_offsets_[group],
+        label_neighbor_offsets_[group + 1]
+    );
 }
 
 const std::vector<uint>& Graph::GetVerticesByLabel(uint label) const
@@ -276,14 +307,25 @@ void Graph::BuildLabelNeighborIndex()
         );
     }
 
-    neighbors_by_label_.clear();
-    neighbors_by_label_.resize(NumVertices());
+    label_group_offsets_.assign(NumVertices() + 1, 0);
+    label_group_labels_.clear();
+    label_neighbor_offsets_.clear();
+    label_neighbors_.clear();
+
+    label_neighbors_.reserve(static_cast<size_t>(edge_count_) * 2);
+
+    std::vector<size_t> label_counts(vlabel_count_, 0);
+    std::vector<size_t> label_write_positions(vlabel_count_, 0);
+    std::vector<uint> touched_labels;
+    touched_labels.reserve(std::min<size_t>(vlabel_count_, max_degree_));
+    std::vector<uint> grouped_neighbors;
+    grouped_neighbors.reserve(max_degree_);
 
     for (uint v = 0; v < NumVertices(); ++v)
     {
-        neighbors_by_label_[v].resize(vlabel_count_);
-
+        label_group_offsets_[v] = label_group_labels_.size();
         const std::vector<uint>& nbrs = neighbors_[v];
+        touched_labels.clear();
 
         for (uint nbr : nbrs)
         {
@@ -291,13 +333,46 @@ void Graph::BuildLabelNeighborIndex()
 
             if (nbr_label == NOT_EXIST) continue;
             if (nbr_label >= vlabel_count_) continue;
+            if (label_counts[nbr_label]++ == 0)
+            {
+                touched_labels.push_back(nbr_label);
+            }
+        }
 
-            neighbors_by_label_[v][nbr_label].push_back(nbr);
+        std::sort(touched_labels.begin(), touched_labels.end());
+        grouped_neighbors.resize(nbrs.size());
+
+        size_t offset = 0;
+        for (uint label : touched_labels)
+        {
+            label_group_labels_.push_back(label);
+            label_neighbor_offsets_.push_back(label_neighbors_.size() + offset);
+            label_write_positions[label] = offset;
+            offset += label_counts[label];
+        }
+
+        // neighbors_[v] is already sorted by vertex id, so stable placement
+        // keeps every label group sorted for intersection.
+        for (uint nbr : nbrs)
+        {
+            const uint label = GetVertexLabel(nbr);
+            if (label == NOT_EXIST || label >= vlabel_count_) continue;
+            grouped_neighbors[label_write_positions[label]++] = nbr;
+        }
+        label_neighbors_.insert(
+            label_neighbors_.end(),
+            grouped_neighbors.begin(),
+            grouped_neighbors.begin() + offset
+        );
+
+        for (uint label : touched_labels)
+        {
+            label_counts[label] = 0;
         }
     }
 
-    // Because neighbors_[v] is sorted by vertex id, every
-    // neighbors_by_label_[v][label] is also sorted by vertex id.
+    label_group_offsets_[NumVertices()] = label_group_labels_.size();
+    label_neighbor_offsets_.push_back(label_neighbors_.size());
 }
 
 void Graph::LoadFromFile(const std::string& path)
